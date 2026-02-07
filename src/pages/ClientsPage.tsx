@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
   Search,
-  Users,
   Mail,
   Phone,
   Target,
@@ -23,7 +22,7 @@ import {
   CircleAlert,
 } from 'lucide-react';
 import { getAdvisoryClients, getClientActionItems, toggleActionItem } from '../services/api';
-import type { Client, Goal, Holding, MeetingActionItems, ActionItem } from '../services/api';
+import type { Client, Goal, Holding, MeetingActionItems } from '../services/api';
 import { ActionItemEmailModal } from '../components/ActionItemEmailModal';
 
 // ── Helpers ─────────────────────────────────
