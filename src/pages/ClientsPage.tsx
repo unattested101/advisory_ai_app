@@ -331,14 +331,15 @@ function ActionItemsTab({ clientId, clientName }: { clientId: string; clientName
                         </p>
                       )}
                     </div>
-                    {/* Email button (only for pending items) */}
+                    {/* Email button (only for pending client-level items) */}
                     {!item.done && (
                       <button
                         onClick={() => setEmailItemText(item.text)}
-                        className="shrink-0 p-1.5 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+                        className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-900 hover:text-white hover:border-gray-900 transition-all text-xs font-medium"
                         title="Send email to client"
                       >
                         <Mail className="w-3.5 h-3.5" />
+                        <span>Email</span>
                       </button>
                     )}
                     {/* Time remaining badge */}
