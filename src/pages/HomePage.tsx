@@ -405,10 +405,18 @@ function ExpandedArticle({ article }: { article: NewsItem }) {
 
 // ── Upcoming Action Items ───────────────────
 
+interface ClientGroup {
+  clientId: string;
+  clientName: string;
+  items: UpcomingActionItem[];
+  hasOverdue: boolean;
+  hasUrgent: boolean;
+}
+
 function UpcomingActions() {
   const [items, setItems] = useState<UpcomingActionItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showAll, setShowAll] = useState(false);
+  const [expandedClients, setExpandedClients] = useState<Set<string>>(new Set());
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
   const [emailItem, setEmailItem] = useState<UpcomingActionItem | null>(null);
 
@@ -417,6 +425,15 @@ function UpcomingActions() {
       try {
         const data = await getUpcomingActionItems();
         setItems(data.items);
+        // Auto-expand clients with overdue or urgent items
+        const clientsToExpand = new Set<string>();
+        data.items.forEach((item) => {
+          const time = getTimeRemaining(item.dueDate);
+          if (time.overdue || time.urgent) {
+            clientsToExpand.add(item.clientId);
+          }
+        });
+        setExpandedClients(clientsToExpand);
       } catch (err) {
         console.error('Failed to load upcoming actions:', err);
       } finally {
@@ -442,6 +459,18 @@ function UpcomingActions() {
     }
   };
 
+  const toggleClientExpand = (clientId: string) => {
+    setExpandedClients((prev) => {
+      const next = new Set(prev);
+      if (next.has(clientId)) {
+        next.delete(clientId);
+      } else {
+        next.add(clientId);
+      }
+      return next;
+    });
+  };
+
   if (loading) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-8 flex items-center justify-center">
@@ -458,14 +487,40 @@ function UpcomingActions() {
     const t = getTimeRemaining(i.dueDate);
     return !t.overdue && t.urgent;
   });
-  const upcomingItems = items.filter((i) => {
+  const upcomingItemsCount = items.filter((i) => {
     const t = getTimeRemaining(i.dueDate);
     return !t.overdue && !t.urgent;
   });
 
-  const PREVIEW_LIMIT = 3;
-  const visibleItems = showAll ? items : items.slice(0, PREVIEW_LIMIT);
-  const hasMore = items.length > PREVIEW_LIMIT;
+  // Group items by client
+  const clientGroups: ClientGroup[] = [];
+  const clientMap = new Map<string, ClientGroup>();
+
+  items.forEach((item) => {
+    let group = clientMap.get(item.clientId);
+    if (!group) {
+      group = {
+        clientId: item.clientId,
+        clientName: item.clientName,
+        items: [],
+        hasOverdue: false,
+        hasUrgent: false,
+      };
+      clientMap.set(item.clientId, group);
+      clientGroups.push(group);
+    }
+    group.items.push(item);
+    const time = getTimeRemaining(item.dueDate);
+    if (time.overdue) group.hasOverdue = true;
+    if (time.urgent && !time.overdue) group.hasUrgent = true;
+  });
+
+  // Sort clients: overdue first, then urgent, then by name
+  clientGroups.sort((a, b) => {
+    if (a.hasOverdue !== b.hasOverdue) return a.hasOverdue ? -1 : 1;
+    if (a.hasUrgent !== b.hasUrgent) return a.hasUrgent ? -1 : 1;
+    return a.clientName.localeCompare(b.clientName);
+  });
 
   return (
     <div className="space-y-4">
@@ -503,103 +558,154 @@ function UpcomingActions() {
             </span>
           </div>
           <p className="text-2xl font-bold text-gray-600">
-            {upcomingItems.length}
+            {upcomingItemsCount.length}
           </p>
         </div>
       </div>
 
-      {/* Action items list */}
+      {/* Action items grouped by client */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-gray-900">Action Items</h2>
-          <span className="text-xs text-gray-400">{items.length} pending</span>
+          <h2 className="text-sm font-semibold text-gray-900">Action Items by Client</h2>
+          <span className="text-xs text-gray-400">{clientGroups.length} clients · {items.length} pending</span>
         </div>
 
         <div className="divide-y divide-gray-100">
-          {visibleItems.map((item) => {
-            const time = getTimeRemaining(item.dueDate);
-            const toggling = togglingIds.has(item.id);
+          {clientGroups.map((group) => {
+            const isExpanded = expandedClients.has(group.clientId);
 
             return (
-              <div
-                key={item.id}
-                className={`px-5 py-3 flex items-center gap-3 transition-all hover:bg-gray-50/60 ${toggling ? 'opacity-40' : ''}`}
-              >
-                {/* Toggle */}
+              <div key={group.clientId}>
+                {/* Client header row */}
                 <button
-                  onClick={() => handleToggle(item.meetingId, item.id)}
-                  disabled={toggling}
-                  className="shrink-0"
-                  title="Mark as done"
-                >
-                  <Circle className="w-[18px] h-[18px] text-gray-300 hover:text-emerald-400 transition-colors" />
-                </button>
-
-                {/* Client avatar */}
-                <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 text-[10px] font-bold shrink-0">
-                  {item.clientName
-                    .split(' ')
-                    .map((n) => n[0])
-                    .join('')
-                    .slice(0, 2)}
-                </div>
-
-                {/* Text */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-800 truncate">{item.text}</p>
-                  <p className="text-[11px] text-gray-400 mt-0.5">
-                    {item.clientName}
-                    {item.assignee ? ` \u00B7 ${item.assignee}` : ''}
-                  </p>
-                </div>
-
-                {/* Email button - only for client-level action items */}
-                {item.clientId && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEmailItem(item);
-                    }}
-                    className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-900 hover:text-white hover:border-gray-900 transition-all text-xs font-medium"
-                    title="Send email to client"
-                  >
-                    <Mail className="w-3.5 h-3.5" />
-                    <span>Email</span>
-                  </button>
-                )}
-
-                {/* Time badge */}
-                <span
-                  className={`shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${
-                    time.overdue
-                      ? 'bg-red-50 text-red-600'
-                      : time.urgent
-                        ? 'bg-amber-50 text-amber-600'
-                        : 'bg-gray-100 text-gray-500'
+                  onClick={() => toggleClientExpand(group.clientId)}
+                  className={`w-full px-5 py-3.5 flex items-center gap-3 transition-all hover:bg-gray-50/60 ${
+                    group.hasOverdue ? 'bg-red-50/30' : group.hasUrgent ? 'bg-amber-50/30' : ''
                   }`}
                 >
-                  {time.overdue ? (
-                    <CircleAlert className="w-3 h-3" />
-                  ) : (
-                    <Clock className="w-3 h-3" />
-                  )}
-                  {time.label}
-                </span>
+                  {/* Client avatar */}
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                    group.hasOverdue
+                      ? 'bg-red-100 text-red-700'
+                      : group.hasUrgent
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    {group.clientName
+                      .split(' ')
+                      .map((n) => n[0])
+                      .join('')
+                      .slice(0, 2)}
+                  </div>
+
+                  {/* Client name & count */}
+                  <div className="flex-1 min-w-0 text-left">
+                    <p className="text-sm font-semibold text-gray-900">{group.clientName}</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      {group.items.length} action item{group.items.length !== 1 ? 's' : ''}
+                      {group.hasOverdue && (
+                        <span className="ml-2 text-red-500 font-medium">
+                          · {group.items.filter((i) => getTimeRemaining(i.dueDate).overdue).length} overdue
+                        </span>
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Status badges */}
+                  <div className="flex items-center gap-2">
+                    {group.hasOverdue && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-600">
+                        <CircleAlert className="w-3 h-3" />
+                        Overdue
+                      </span>
+                    )}
+                    {group.hasUrgent && !group.hasOverdue && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">
+                        <Clock className="w-3 h-3" />
+                        Due Soon
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Expand icon */}
+                  <ChevronDown
+                    className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${
+                      isExpanded ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+
+                {/* Expanded action items for this client */}
+                {isExpanded && (
+                  <div className="border-t border-gray-100 bg-gray-50/50">
+                    {group.items.map((item) => {
+                      const time = getTimeRemaining(item.dueDate);
+                      const toggling = togglingIds.has(item.id);
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={`px-5 py-3 pl-16 flex items-center gap-3 transition-all hover:bg-gray-100/60 border-b border-gray-100/80 last:border-b-0 ${toggling ? 'opacity-40' : ''}`}
+                        >
+                          {/* Toggle */}
+                          <button
+                            onClick={() => handleToggle(item.meetingId, item.id)}
+                            disabled={toggling}
+                            className="shrink-0"
+                            title="Mark as done"
+                          >
+                            <Circle className="w-[18px] h-[18px] text-gray-300 hover:text-emerald-400 transition-colors" />
+                          </button>
+
+                          {/* Text */}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-gray-800">{item.text}</p>
+                            {item.assignee && (
+                              <p className="text-[11px] text-gray-400 mt-0.5">
+                                Assigned to {item.assignee}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Email button */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEmailItem(item);
+                            }}
+                            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-900 hover:text-white hover:border-gray-900 transition-all text-xs font-medium"
+                            title="Send email to client"
+                          >
+                            <Mail className="w-3.5 h-3.5" />
+                            <span>Email</span>
+                          </button>
+
+                          {/* Time badge */}
+                          <span
+                            className={`shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${
+                              time.overdue
+                                ? 'bg-red-50 text-red-600'
+                                : time.urgent
+                                  ? 'bg-amber-50 text-amber-600'
+                                  : 'bg-gray-100 text-gray-500'
+                            }`}
+                          >
+                            {time.overdue ? (
+                              <CircleAlert className="w-3 h-3" />
+                            ) : (
+                              <Clock className="w-3 h-3" />
+                            )}
+                            {time.label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
-
-        {/* Show more / less */}
-        {hasMore && (
-          <button
-            onClick={() => setShowAll((v) => !v)}
-            className="w-full px-5 py-2.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 border-t border-gray-100 flex items-center justify-center gap-1 transition-colors"
-          >
-            {showAll ? 'Show less' : `Show all ${items.length} items`}
-            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showAll ? 'rotate-180' : ''}`} />
-          </button>
-        )}
       </div>
 
       {/* Email modal */}
